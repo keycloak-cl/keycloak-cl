@@ -30,6 +30,7 @@ import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.services.ErrorResponse;
 import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
 import org.keycloak.utils.SearchQueryUtils;
+import org.keycloak.utils.StreamsUtil;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DefaultValue;
@@ -82,15 +83,48 @@ public class GroupsResource {
                                                  @QueryParam("briefRepresentation") @DefaultValue("true") boolean briefRepresentation) {
         auth.groups().requireList();
 
+//        if (Objects.nonNull(searchQuery)) {
+//            Map<String, String> attributes = SearchQueryUtils.getFields(searchQuery);
+//            return ModelToRepresentation.searchGroupsByAttributes(session, realm, !briefRepresentation, attributes, firstResult, maxResults);
+//        } else if (Objects.nonNull(search)) {
+//            return ModelToRepresentation.searchForGroupByName(session, realm, !briefRepresentation, search.trim(), exact, firstResult, maxResults);
+//        } else if(Objects.nonNull(firstResult) && Objects.nonNull(maxResults)) {
+//            return ModelToRepresentation.toGroupHierarchy(realm, !briefRepresentation, firstResult, maxResults);
+//        } else {
+//            return ModelToRepresentation.toGroupHierarchy(realm, !briefRepresentation);
+//        }
+
         if (Objects.nonNull(searchQuery)) {
             Map<String, String> attributes = SearchQueryUtils.getFields(searchQuery);
-            return ModelToRepresentation.searchGroupsByAttributes(session, realm, !briefRepresentation, attributes, firstResult, maxResults);
+            return session.groups().searchGroupsByAttributes(realm, attributes, firstResult, maxResults)
+                    .filter(g -> auth.groups().canView(g))
+                    // We need to return whole group hierarchy when any child group fulfills the attribute search,
+                    // therefore for each group from the result, we need to find root group
+                    .map(group -> {
+                        while (Objects.nonNull(group.getParentId())) {
+                            group = group.getParent();
+                        }
+                        return group;
+                    })
+
+                    // More child groups of one root can fulfill the search, so we need to filter duplicates
+                    .filter(StreamsUtil.distinctByKey(GroupModel::getId))
+
+                    // and then turn the result into GroupRepresentations creating whole hierarchy of child groups for each root group
+                    .map(g -> ModelToRepresentation.toGroupHierarchy(g, !briefRepresentation, attributes));
         } else if (Objects.nonNull(search)) {
-            return ModelToRepresentation.searchForGroupByName(session, realm, !briefRepresentation, search.trim(), exact, firstResult, maxResults);
+            return session.groups().searchForGroupByNameStream(realm, search, exact, firstResult, maxResults)
+                    .filter(g -> auth.groups().canView(g))
+                    .map(g -> ModelToRepresentation.toGroupHierarchy(g, !briefRepresentation, search, exact));
+
         } else if(Objects.nonNull(firstResult) && Objects.nonNull(maxResults)) {
-            return ModelToRepresentation.toGroupHierarchy(realm, !briefRepresentation, firstResult, maxResults);
+            return realm.getTopLevelGroupsStream(firstResult, maxResults)
+                    .filter(g -> auth.groups().canView(g))
+                    .map(g -> ModelToRepresentation.toGroupHierarchy(g, !briefRepresentation));
         } else {
-            return ModelToRepresentation.toGroupHierarchy(realm, !briefRepresentation);
+            return realm.getTopLevelGroupsStream()
+                    .filter(g -> auth.groups().canView(g))
+                    .map(g -> ModelToRepresentation.toGroupHierarchy(g, !briefRepresentation));
         }
     }
 

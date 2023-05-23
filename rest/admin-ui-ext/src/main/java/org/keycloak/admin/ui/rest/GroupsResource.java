@@ -64,7 +64,8 @@ public class GroupsResource {
             stream = this.realm.getTopLevelGroupsStream().filter(g -> g.getName().contains(search)).skip(first).limit(max);
         }
 
-        return stream.map(g -> toGroupHierarchy(g, search, exact));
+//        return stream.map(g -> toGroupHierarchy(g, search, exact));
+        return stream.filter(g -> this.auth.groups().canView(g)).map(g -> toGroupHierarchy(g, search, exact));
     }
 
     private GroupRepresentation toGroupHierarchy(GroupModel group, final String search, boolean exact) {
